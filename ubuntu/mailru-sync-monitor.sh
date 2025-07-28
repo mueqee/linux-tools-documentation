@@ -116,6 +116,80 @@ stop_sync() {
     fi
 }
 
+# Функция для парсинга прогресса из вывода mailrucloud
+parse_progress_info() {
+    local log_file="$1"
+    local progress_info=""
+    local uploaded_files=0
+    local total_files=0
+    local percentage=0
+    
+    if [ ! -f "$log_file" ]; then
+        echo "Инициализация..."
+        return 0
+    fi
+    
+    # Ищем информацию о прогрессе в последних строках лога
+    local recent_output=$(tail -n 20 "$log_file")
+    
+    # Поиск количества файлов для загрузки (в начале процесса)
+    if [ "$total_files" -eq 0 ]; then
+        total_files=$(echo "$recent_output" | grep -o "Found [0-9]\+ files" | head -1 | grep -o "[0-9]\+")
+        if [ -z "$total_files" ]; then
+            total_files=$(echo "$recent_output" | grep -o "Найдено [0-9]\+ файлов" | head -1 | grep -o "[0-9]\+")
+        fi
+        # Сохраняем total_files в временный файл для последующего использования
+        if [ -n "$total_files" ] && [ "$total_files" -gt 0 ]; then
+            echo "$total_files" > "/tmp/mailru_total_files.tmp"
+        fi
+    fi
+    
+    # Читаем сохраненное значение total_files
+    if [ -f "/tmp/mailru_total_files.tmp" ]; then
+        total_files=$(cat "/tmp/mailru_total_files.tmp")
+    fi
+    
+    # Поиск текущего прогресса загрузки
+    uploaded_files=$(echo "$recent_output" | grep -o "Uploaded [0-9]\+" | tail -1 | grep -o "[0-9]\+")
+    if [ -z "$uploaded_files" ]; then
+        uploaded_files=$(echo "$recent_output" | grep -o "Загружено [0-9]\+" | tail -1 | grep -o "[0-9]\+")
+    fi
+    
+    # Поиск процентов
+    percentage=$(echo "$recent_output" | grep -o "[0-9]\+%" | tail -1 | grep -o "[0-9]\+")
+    
+    # Альтернативный способ подсчета прогресса
+    if [ -z "$uploaded_files" ]; then
+        uploaded_files=$(echo "$recent_output" | grep -c "✓\|√\|uploaded\|загружен")
+    fi
+    
+    # Расчет процентов, если не найден в выводе
+    if [ -z "$percentage" ] && [ -n "$total_files" ] && [ "$total_files" -gt 0 ] && [ -n "$uploaded_files" ]; then
+        percentage=$((uploaded_files * 100 / total_files))
+    fi
+    
+    # Формирование строки прогресса
+    if [ -n "$uploaded_files" ] && [ -n "$total_files" ] && [ "$total_files" -gt 0 ]; then
+        if [ -n "$percentage" ]; then
+            echo "${uploaded_files}/${total_files} ${percentage}%"
+        else
+            echo "${uploaded_files}/${total_files}"
+        fi
+    elif [ -n "$percentage" ]; then
+        echo "${percentage}%"
+    elif [ -n "$uploaded_files" ] && [ "$uploaded_files" -gt 0 ]; then
+        echo "Загружено: ${uploaded_files} файлов"
+    else
+        # Проверяем, есть ли активность в логе
+        local last_activity=$(echo "$recent_output" | tail -5 | grep -E "(uploading|downloading|sync|загрузка|скачивание)" | tail -1)
+        if [ -n "$last_activity" ]; then
+            echo "Обработка файлов..."
+        else
+            echo "Анализ структуры..."
+        fi
+    fi
+}
+
 # Функция для получения статуса синхронизации
 get_sync_status() {
     if [ ! -f "$PID_FILE" ]; then
@@ -130,16 +204,17 @@ get_sync_status() {
         return 1
     fi
     
-    # Анализ лог-файла для извлечения прогресса
-    if [ -f "$STATUS_FILE" ]; then
-        local last_line=$(tail -n 5 "$STATUS_FILE" | grep -E "(Загружено|Uploaded|Progress|%)" | tail -n 1)
-        if [ -n "$last_line" ]; then
-            echo "$last_line"
-        else
-            echo "Синхронизация выполняется... (анализ файлов)"
-        fi
+    # Получение прогресса
+    local progress=$(parse_progress_info "$STATUS_FILE")
+    
+    # Получение информации о ресурсах
+    local cpu_usage=$(ps -p "$pid" -o %cpu --no-headers 2>/dev/null | tr -d ' ')
+    local mem_usage=$(ps -p "$pid" -o %mem --no-headers 2>/dev/null | tr -d ' ')
+    
+    if [ -n "$cpu_usage" ] && [ -n "$mem_usage" ]; then
+        echo "$progress (CPU: ${cpu_usage}%, RAM: ${mem_usage}%)"
     else
-        echo "Синхронизация выполняется... (инициализация)"
+        echo "$progress"
     fi
 }
 
