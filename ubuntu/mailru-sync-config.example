@@ -1,0 +1,83 @@
+# Пример конфигурации для mailru-sync-monitor.sh
+# Скопируйте этот файл и отредактируйте под свои нужды
+
+# ===============================================
+# ОСНОВНЫЕ НАСТРОЙКИ СИНХРОНИЗАЦИИ
+# ===============================================
+
+# Исходная директория на локальной машине
+SOURCE_DIR="/home/liiilia/Yandex.Disk/lily-is-here"
+
+# Целевая директория в Mail.ru Cloud
+TARGET_DIR="/lily-is-here"
+
+# Количество потоков для синхронизации (рекомендуется: 4-8)
+THREADS=8
+
+# Направление синхронизации:
+# - "push" - только загрузка на облако
+# - "pull" - только скачивание с облака  
+# - "sync" - двусторонняя синхронизация
+DIRECTION="push"
+
+# ===============================================
+# НАСТРОЙКИ ВИРТУАЛЬНОГО ОКРУЖЕНИЯ
+# ===============================================
+
+# Путь к виртуальному окружению (раскомментируйте и укажите свой путь)
+# VENV_PATH="/home/liiilia/venv/mailru"
+# VENV_PATH="/home/liiilia/.virtualenvs/mailru"
+# VENV_PATH="/opt/venv/mailru"
+
+# Альтернативно можно указать прямой путь к исполняемому файлу
+# MAILRU_CMD="/home/liiilia/venv/mailru/bin/mailrucloud"
+
+# ===============================================
+# НАСТРОЙКИ МОНИТОРИНГА И ЛОГОВ
+# ===============================================
+
+# Интервал уведомлений в секундах (по умолчанию: 300 = 5 минут)
+NOTIFICATION_INTERVAL=300
+
+# Путь к файлу логов
+LOG_FILE="/tmp/mailru_sync_monitor.log"
+
+# Путь к файлу с PID процесса
+PID_FILE="/tmp/mailru_sync.pid"
+
+# Путь к файлу статуса синхронизации
+STATUS_FILE="/tmp/mailru_sync_status.txt"
+
+# ===============================================
+# ПРИМЕРЫ РАЗЛИЧНЫХ КОНФИГУРАЦИЙ
+# ===============================================
+
+# Пример 1: Для пользователя с виртуальным окружением в домашней директории
+# VENV_PATH="$HOME/.venv"
+# SOURCE_DIR="$HOME/Documents/MyProject"
+# TARGET_DIR="/MyProject"
+
+# Пример 2: Для системы с глобально установленным mailrucloud
+# (без указания VENV_PATH)
+# SOURCE_DIR="/var/www/html"
+# TARGET_DIR="/website_backup"
+
+# Пример 3: Для разработчика с несколькими проектами
+# VENV_PATH="$HOME/.virtualenvs/mailru-dev"
+# SOURCE_DIR="$HOME/Projects/current-project"
+# TARGET_DIR="/dev/current-project"
+# THREADS=4
+
+# ===============================================
+# ИНСТРУКЦИИ ПО ПРИМЕНЕНИЮ
+# ===============================================
+
+# 1. Скопируйте этот файл:
+#    cp ubuntu/mailru-sync-config.example ubuntu/mailru-sync-config.conf
+
+# 2. Отредактируйте параметры в ubuntu/mailru-sync-config.conf
+
+# 3. Модифицируйте ubuntu/mailru-sync-monitor.sh для чтения конфигурации:
+#    source "$(dirname "$0")/mailru-sync-config.conf"
+
+# 4. Или напрямую редактируйте переменные в начале ubuntu/mailru-sync-monitor.sh 
