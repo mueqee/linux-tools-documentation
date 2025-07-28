@@ -16,7 +16,7 @@ PID_FILE="/tmp/mailru_sync.pid"
 STATUS_FILE="/tmp/mailru_sync_status.txt"
 
 # Конфигурация виртуального окружения (раскомментируйте при необходимости)
-# VENV_PATH="/path/to/your/venv"
+VENV_PATH="/home/liiilia/.venv"
 # PYTHON_PATH="$VENV_PATH/bin/python"
 # MAILRU_CMD="$VENV_PATH/bin/mailrucloud"
 
