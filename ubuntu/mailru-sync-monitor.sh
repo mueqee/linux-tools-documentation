@@ -7,13 +7,59 @@
 set -e
 
 # Конфигурация
-SOURCE_DIR="/home/liiilia/Yandex.Disk/lily-is-here/UI"
-TARGET_DIR="/lily-is-here/UI"
+SOURCE_DIR="/home/liiilia/Yandex.Disk/lily-is-here"
+TARGET_DIR="/lily-is-here"
 THREADS=8
 DIRECTION="push"
 LOG_FILE="/tmp/mailru_sync_monitor.log"
 PID_FILE="/tmp/mailru_sync.pid"
 STATUS_FILE="/tmp/mailru_sync_status.txt"
+
+# Конфигурация виртуального окружения (раскомментируйте при необходимости)
+# VENV_PATH="/path/to/your/venv"
+# PYTHON_PATH="$VENV_PATH/bin/python"
+# MAILRU_CMD="$VENV_PATH/bin/mailrucloud"
+
+# Автоматическое определение mailrucloud
+MAILRU_CMD="mailrucloud"
+
+# Функция для активации виртуального окружения
+activate_venv() {
+    if [ -n "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
+        log_message "Активация виртуального окружения: $VENV_PATH"
+        source "$VENV_PATH/bin/activate"
+        return 0
+    fi
+    return 1
+}
+
+# Функция для определения команды mailrucloud
+detect_mailrucloud() {
+    # Проверяем, указан ли путь к виртуальному окружению
+    if [ -n "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/mailrucloud" ]; then
+        MAILRU_CMD="$VENV_PATH/bin/mailrucloud"
+        log_message "Используется mailrucloud из виртуального окружения: $MAILRU_CMD"
+        return 0
+    fi
+    
+    # Проверяем глобальную установку
+    if command -v mailrucloud &> /dev/null; then
+        MAILRU_CMD="mailrucloud"
+        log_message "Используется глобально установленный mailrucloud"
+        return 0
+    fi
+    
+    # Проверяем стандартные пути виртуальных окружений
+    for venv_dir in "$HOME/.venv" "$HOME/venv" "$HOME/.virtualenvs/mailru" "$(pwd)/venv"; do
+        if [ -f "$venv_dir/bin/mailrucloud" ]; then
+            MAILRU_CMD="$venv_dir/bin/mailrucloud"
+            log_message "Найден mailrucloud в: $MAILRU_CMD"
+            return 0
+        fi
+    done
+    
+    return 1
+}
 
 # Функция для отправки уведомлений
 send_notification() {
@@ -21,9 +67,11 @@ send_notification() {
     local message="$2"
     local icon="${3:-dialog-information}"
     
-    DISPLAY=:0 \
-    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
-    notify-send -i "$icon" "$title" "$message"
+    if command -v notify-send &> /dev/null; then
+        DISPLAY=:0 \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
+        notify-send -i "$icon" "$title" "$message"
+    fi
 }
 
 # Функция для логирования
@@ -42,7 +90,7 @@ start_sync() {
     send_notification "📂 Mail.ru Cloud Sync" "Начинается синхронизация UI проекта"
     
     # Запуск синхронизации в фоновом режиме с перенаправлением вывода
-    nohup mailrucloud sync "$SOURCE_DIR" "$TARGET_DIR" \
+    nohup "$MAILRU_CMD" sync "$SOURCE_DIR" "$TARGET_DIR" \
         --direction "$DIRECTION" \
         --threads "$THREADS" \
         --only-new > "$STATUS_FILE" 2>&1 &
@@ -167,22 +215,46 @@ show_help() {
     echo "  $0 start     # Запустить синхронизацию"
     echo "  $0 status    # Проверить статус"
     echo "  $0 stop      # Остановить синхронизацию"
+    echo ""
+    echo "Конфигурация виртуального окружения:"
+    echo "  Если mailrucloud установлен в виртуальном окружении, отредактируйте"
+    echo "  переменную VENV_PATH в начале скрипта:"
+    echo "    VENV_PATH=\"/path/to/your/venv\""
+    echo ""
+    echo "  Скрипт автоматически ищет mailrucloud в следующих местах:"
+    echo "    - Глобальная установка (pip install mailru-cloud-client)"
+    echo "    - Указанное виртуальное окружение (VENV_PATH)"
+    echo "    - \$HOME/.venv/bin/mailrucloud"
+    echo "    - \$HOME/venv/bin/mailrucloud"
+    echo "    - \$HOME/.virtualenvs/mailru/bin/mailrucloud"
+    echo "    - ./venv/bin/mailrucloud"
 }
 
-# Проверка наличия mailrucloud
-if ! command -v mailrucloud &> /dev/null; then
-    echo "Ошибка: mailrucloud не установлен или не найден в PATH"
-    send_notification "❌ Mail.ru Cloud Sync" "mailrucloud не установлен!" "dialog-error"
+# Создание директории для логов
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Определение и проверка mailrucloud
+if ! detect_mailrucloud; then
+    echo "Ошибка: mailrucloud не найден!"
+    echo ""
+    echo "Возможные решения:"
+    echo "1. Установите глобально: pip install mailru-cloud-client"
+    echo "2. Установите в виртуальном окружении и укажите VENV_PATH в скрипте"
+    echo "3. Активируйте виртуальное окружение перед запуском"
+    echo ""
+    echo "Для использования виртуального окружения отредактируйте переменную VENV_PATH в начале скрипта:"
+    echo "  VENV_PATH=\"/path/to/your/venv\""
+    send_notification "❌ Mail.ru Cloud Sync" "mailrucloud не найден! Проверьте установку." "dialog-error"
     exit 1
 fi
+
+# Активация виртуального окружения (если указано)
+activate_venv
 
 # Проверка наличия notify-send
 if ! command -v notify-send &> /dev/null; then
     echo "Предупреждение: notify-send не установлен. Уведомления отключены."
 fi
-
-# Создание директории для логов
-mkdir -p "$(dirname "$LOG_FILE")"
 
 # Обработка команд
 case "${1:-help}" in
