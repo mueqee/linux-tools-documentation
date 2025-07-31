@@ -92,80 +92,106 @@ parse_process_info() {
 get_process_progress() {
     local pid="$1"
     local source_dir="$2"
+
     local uploaded_files=0
     local total_files=0
+    local percentage=""
     local current_file=""
     local network_activity=""
-    
+
     # Получаем сетевую активность
     local net_stats=$(ss -t | grep -c "cloud.mail.ru" 2>/dev/null || echo "0")
     if [ "$net_stats" -gt 0 ]; then
         network_activity="Сеть активна"
     fi
-    
+
     # Анализируем открытые файлы для определения текущего файла
     local open_files=$(lsof -p "$pid" 2>/dev/null | grep -E "\.(zip|rar|jpg|jpeg|png|pdf|doc|docx|mp4|avi|mov)$" | tail -1)
     if [ -n "$open_files" ]; then
         current_file=$(echo "$open_files" | awk '{print $NF}' | xargs basename)
     fi
-    
-    # Получаем время работы процесса
-    local elapsed_seconds=$(ps -o etime= -p "$pid" 2>/dev/null | head -1 | awk -F: '{
-        if(NF==3) print $1*3600+$2*60+$3; 
-        else if(NF==2) print $1*60+$2;
-        else print $1
-    }' | tr -d ' ')
-    
-    # Оценка на основе времени работы (адаптивная скорость)
-    if [ -n "$elapsed_seconds" ] && [ "$elapsed_seconds" -gt 0 ]; then
-        # Динамическая скорость в зависимости от типа файлов
-        local files_per_minute=4  # базовая скорость
-        
-        # Определяем тип синхронизируемых данных по пути
-        if [[ "$source_dir" == *"фото"* ]] || [[ "$source_dir" == *"photo"* ]] || [[ "$source_dir" == *"images"* ]]; then
-            files_per_minute=2  # фото загружаются медленнее
-        elif [[ "$source_dir" == *"UI"* ]] || [[ "$source_dir" == *"design"* ]]; then
-            files_per_minute=6  # UI файлы быстрее
+
+    # === 1) Попытка получить реальный прогресс из stdout ===
+    local stdout_path="$(readlink -f /proc/$pid/fd/1 2>/dev/null)"
+    if [ -n "$stdout_path" ] && [ -r "$stdout_path" ]; then
+        local recent_output=$(timeout 0.3 tail -n 25 "$stdout_path" 2>/dev/null)
+        # Ищем X/Y
+        local xy=$(echo "$recent_output" | grep -Eo "[0-9]+/[0-9]+" | tail -1)
+        if [[ "$xy" == */* ]]; then
+            uploaded_files=$(echo "$xy" | cut -d/ -f1)
+            total_files=$(echo "$xy" | cut -d/ -f2)
         fi
-        
-        uploaded_files=$((elapsed_seconds * files_per_minute / 60))
-        
-        # Получаем общее количество файлов
-        local cache_file="/tmp/mailru_total_${pid}.tmp"
-        if [ ! -f "$cache_file" ] && [ -d "$source_dir" ]; then
+        # Ищем процент
+        local perc=$(echo "$recent_output" | grep -Eo "[0-9]{1,3}%" | tail -1 | tr -d '%')
+        if [ -n "$perc" ]; then
+            percentage=$perc
+        fi
+    fi
+
+    # === 1b) Если stdout не дал результатов, пробуем strace на write ===
+    if [ -z "$xy" ]; then
+        local strace_tmp=$(mktemp)
+        timeout 0.3 strace -p $pid -e write -s 200 2>$strace_tmp || true
+        local strace_out=$(grep -oE '"[^"]+"' $strace_tmp | tr -d '"')
+        rm -f $strace_tmp
+        xy=$(echo "$strace_out" | grep -Eo "[0-9]+/[0-9]+" | tail -1)
+        if [[ "$xy" == */* ]]; then
+            uploaded_files=$(echo "$xy" | cut -d/ -f1)
+            total_files=$(echo "$xy" | cut -d/ -f2)
+        fi
+        perc=$(echo "$strace_out" | grep -Eo "[0-9]{1,3}%" | tail -1 | tr -d '%')
+        if [ -n "$perc" ]; then
+            percentage=$perc
+        fi
+    fi
+
+    local cache_file="/tmp/mailru_total_${pid}.tmp"
+    if [ -z "$total_files" ] || [ "$total_files" -eq 0 ]; then
+        # Получаем из кэша/файловой системы ТОЛЬКО если X/Y не найдено
+        if [ -f "$cache_file" ]; then
+            total_files=$(cat "$cache_file")
+        elif [ -d "$source_dir" ]; then
             total_files=$(find "$source_dir" -type f 2>/dev/null | wc -l)
             echo "$total_files" > "$cache_file"
-        elif [ -f "$cache_file" ]; then
-            total_files=$(cat "$cache_file")
         fi
     fi
-    
+
+    # === 3) Если только процент известен, вычисляем uploaded_files ===
+    if [ -n "$percentage" ] && [ -n "$total_files" ] && [ "$total_files" -gt 0 ] && [ "$uploaded_files" -eq 0 ]; then
+        uploaded_files=$((percentage * total_files / 100))
+    fi
+
+    # === 4) Если ничего не найдено — резервная оценка по времени ===
+    if [ -z "$uploaded_files" ] || [ "$uploaded_files" -eq 0 ]; then
+        local elapsed_seconds=$(ps -o etime= -p "$pid" 2>/dev/null | head -1 | awk -F: '{if(NF==3) print $1*3600+$2*60+$3; else if(NF==2) print $1*60+$2; else print $1}' | tr -d ' ')
+        local base_speed=5  # файлов в минуту (резервная оценка)
+        uploaded_files=$((elapsed_seconds * base_speed / 60))
+    fi
+
+    # Пересчитываем процент если нужно
+    if [ -z "$percentage" ] && [ -n "$total_files" ] && [ "$total_files" -gt 0 ]; then
+        percentage=$((uploaded_files * 100 / total_files))
+    fi
+
     # Формируем прогресс
     local progress_text=""
-    if [ "$total_files" -gt 0 ] && [ "$uploaded_files" -gt 0 ]; then
-        local percentage=$((uploaded_files * 100 / total_files))
-        if [ "$percentage" -gt 100 ]; then
-            percentage=99
-        fi
+    if [ -n "$uploaded_files" ] && [ -n "$total_files" ] && [ "$total_files" -gt 0 ]; then
         progress_text="${uploaded_files}/${total_files} ${percentage}%"
-    elif [ "$uploaded_files" -gt 0 ]; then
-        progress_text="Обработано: ~${uploaded_files} файлов"
+    elif [ -n "$percentage" ]; then
+        progress_text="${percentage}%"
     else
-        progress_text="Инициализация..."
+        progress_text="~${uploaded_files} файлов"
     fi
-    
-    # Добавляем контекстную информацию
+
     local folder_name=$(basename "$source_dir")
     progress_text="📁 $folder_name: $progress_text"
-    
     if [ -n "$current_file" ]; then
         progress_text="$progress_text - $current_file"
     fi
-    
     if [ -n "$network_activity" ]; then
         progress_text="$progress_text ($network_activity)"
     fi
-    
+
     echo "$progress_text"
 }
 
